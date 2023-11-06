@@ -1,6 +1,13 @@
 #![allow(unused)]
 
-use std::{convert::Infallible, str::FromStr, time::Duration};
+use std::{
+    convert::Infallible,
+    fs::File,
+    io::{BufWriter, Write},
+    path::PathBuf,
+    str::FromStr,
+    time::Duration,
+};
 
 use clap::Parser;
 use color_eyre::{
@@ -108,6 +115,10 @@ struct Cli {
     #[clap(long, default_value = "5")]
     max_block_lag: u64,
 
+    /// Output file to store light client proof
+    #[clap(long)]
+    output_file: Option<PathBuf>,
+
     /// Increase verbosity
     #[clap(flatten)]
     verbose: Verbosity,
@@ -179,13 +190,27 @@ async fn main() -> Result<()> {
     run_detector(
         &mut primary,
         witnesses.as_mut_slice(),
-        primary_trace,
+        primary_trace.clone(),
         max_clock_drift,
         max_block_lag,
         now,
     )
     .await?;
 
+    if let Some(output_file) = args.output_file {
+        write_output(output_file, primary_trace).await?;
+    };
+
+    Ok(())
+}
+
+async fn write_output(output_file: PathBuf, output: Vec<LightBlock>) -> Result<()> {
+    info!("Writing proof to output file ({})", output_file.display());
+
+    let file = File::create(output_file)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(&mut writer, &output)?;
+    writer.flush()?;
     Ok(())
 }
 
