@@ -1,6 +1,12 @@
 #![allow(unused)]
 
-use std::{convert::Infallible, str::FromStr, time::Duration};
+mod stateless_provider;
+
+use crate::stateless_provider::StatelessProvider;
+
+use std::{
+    convert::Infallible, fs::File, io::BufReader, path::PathBuf, str::FromStr, time::Duration,
+};
 
 use clap::Parser;
 use color_eyre::{
@@ -9,6 +15,13 @@ use color_eyre::{
 };
 use futures::future::join_all;
 use tendermint::{crypto::default::Sha256, evidence::Evidence, Time};
+use tendermint_light_client::components::clock::SystemClock;
+use tendermint_light_client::components::io::{AtHeight, Io, IoError};
+use tendermint_light_client::components::scheduler;
+use tendermint_light_client::predicates::ProdPredicates;
+use tendermint_light_client::store::LightStore;
+use tendermint_light_client::types::{PeerId, Status};
+use tendermint_light_client::verifier::ProdVerifier;
 use tendermint_light_client::{
     builder::LightClientBuilder,
     instance::Instance,
@@ -72,14 +85,6 @@ struct Cli {
     #[clap(long)]
     chain_id: String,
 
-    /// Primary RPC address
-    #[clap(long)]
-    primary: HttpClientUrl,
-
-    /// Comma-separated list of witnesses RPC addresses
-    #[clap(long)]
-    witnesses: List<HttpClientUrl>,
-
     /// Height of trusted header
     #[clap(long)]
     trusted_height: Height,
@@ -107,6 +112,10 @@ struct Cli {
     /// Maximum block lag, in seconds
     #[clap(long, default_value = "5")]
     max_block_lag: u64,
+
+    /// Input file containing verification trace, i.e. `LightBlocks`
+    #[clap(long)]
+    input_file: PathBuf,
 
     /// Increase verbosity
     #[clap(flatten)]
@@ -137,7 +146,7 @@ async fn main() -> Result<()> {
 
     let mut primary = make_provider(
         &args.chain_id,
-        args.primary,
+        args.input_file,
         args.trusted_height,
         args.trusted_hash,
         options,
@@ -261,24 +270,47 @@ async fn main() -> Result<()> {
 
 async fn make_provider(
     chain_id: &str,
-    rpc_addr: HttpClientUrl,
+    input_file: PathBuf,
     trusted_height: Height,
     trusted_hash: Hash,
     options: Options,
-) -> Result<Provider> {
+) -> Result<StatelessProvider> {
     use tendermint_rpc::client::CompatMode;
 
-    let rpc_client = HttpClient::builder(rpc_addr)
-        .compat_mode(CompatMode::V0_34)
-        .build()?;
+    // let node_id = rpc_client.status().await?.node_info.id;
+    // let node_id = PeerId::new([0u8; 20]);
+    let node_id = PeerId::from_str("9e995521d27583f957c9f408b52f2443f60ecdc3")?;
+    // let node_id = PeerId::new([64, 187, 35, 86, 85, 85, 0, 0, 227, 202, 212, 85, 85, 85, 0, 0, 0, 187, 35, 86]);
+    let mut light_store = Box::new(MemoryStore::new());
 
-    let node_id = rpc_client.status().await?.node_info.id;
-    let light_store = Box::new(MemoryStore::new());
+    let input_file = File::open(input_file)?;
+    let mut proof_reader = BufReader::new(input_file);
+    let proof: Vec<LightBlock> = serde_json::from_reader(proof_reader)?;
 
-    let instance =
-        LightClientBuilder::prod(node_id, rpc_client.clone(), light_store, options, None)
-            .trust_primary_at(trusted_height, trusted_hash)?
-            .build();
+    for light_block in &proof {
+        light_store.insert(light_block.clone(), Status::Unverified);
+    }
 
-    Ok(Provider::new(chain_id.to_string(), instance, rpc_client))
+    let instance = LightClientBuilder::custom(
+        node_id,
+        options,
+        light_store,
+        Box::new(NullIo {}),
+        Box::new(SystemClock),
+        Box::new(ProdVerifier::default()),
+        Box::new(scheduler::basic_bisecting_schedule),
+        Box::new(ProdPredicates),
+    )
+    .trust_light_block(proof[0].clone())?
+    .build();
+
+    Ok(StatelessProvider::new(chain_id.to_string(), instance))
+}
+
+struct NullIo;
+
+impl Io for NullIo {
+    fn fetch_light_block(&self, height: AtHeight) -> std::result::Result<LightBlock, IoError> {
+        unimplemented!("stateless verification does NOT need access to Io")
+    }
 }
