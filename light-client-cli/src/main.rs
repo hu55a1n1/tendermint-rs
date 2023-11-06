@@ -277,10 +277,6 @@ async fn make_provider(
 ) -> Result<StatelessProvider> {
     use tendermint_rpc::client::CompatMode;
 
-    // let node_id = rpc_client.status().await?.node_info.id;
-    // let node_id = PeerId::new([0u8; 20]);
-    let node_id = PeerId::from_str("9e995521d27583f957c9f408b52f2443f60ecdc3")?;
-    // let node_id = PeerId::new([64, 187, 35, 86, 85, 85, 0, 0, 227, 202, 212, 85, 85, 85, 0, 0, 0, 187, 35, 86]);
     let mut light_store = Box::new(MemoryStore::new());
 
     let input_file = File::open(input_file)?;
@@ -290,6 +286,8 @@ async fn make_provider(
     for light_block in &proof {
         light_store.insert(light_block.clone(), Status::Unverified);
     }
+
+    let node_id = proof[0].provider;
 
     let instance = LightClientBuilder::custom(
         node_id,
