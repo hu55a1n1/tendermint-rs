@@ -159,105 +159,105 @@ async fn main() -> Result<()> {
     info!("Verified to height {} on primary", primary_block.height());
     let primary_trace = primary.get_trace(primary_block.height());
 
-    let witnesses = join_all(args.witnesses.0.into_iter().map(|addr| {
-        make_provider(
-            &args.chain_id,
-            addr,
-            trusted_block.height(),
-            trusted_block.signed_header.header.hash(),
-            options,
-        )
-    }))
-    .await;
+    // let witnesses = join_all(args.witnesses.0.into_iter().map(|addr| {
+    //     make_provider(
+    //         &args.chain_id,
+    //         addr,
+    //         trusted_block.height(),
+    //         trusted_block.signed_header.header.hash(),
+    //         options,
+    //     )
+    // }))
+    // .await;
 
-    let mut witnesses = witnesses.into_iter().collect::<Result<Vec<_>>>()?;
-
-    let max_clock_drift = Duration::from_secs(args.max_clock_drift);
-    let max_block_lag = Duration::from_secs(args.max_block_lag);
-    let now = Time::now();
-
-    run_detector(
-        &mut primary,
-        witnesses.as_mut_slice(),
-        primary_trace,
-        max_clock_drift,
-        max_block_lag,
-        now,
-    )
-    .await?;
-
-    Ok(())
-}
-
-async fn run_detector(
-    primary: &mut Provider,
-    witnesses: &mut [Provider],
-    primary_trace: Vec<LightBlock>,
-    max_clock_drift: Duration,
-    max_block_lag: Duration,
-    now: Time,
-) -> Result<(), Report> {
-    if witnesses.is_empty() {
-        return Err(Error::no_witnesses().into());
-    }
-
-    info!(
-        "Running misbehavior detection against {} witnesses...",
-        witnesses.len()
-    );
-
-    let primary_trace = Trace::new(primary_trace)?;
-
-    let last_verified_block = primary_trace.last();
-    let last_verified_header = &last_verified_block.signed_header;
-
-    for witness in witnesses {
-        let divergence = detect_divergence::<Sha256>(
-            Some(primary),
-            witness,
-            primary_trace.clone().into_vec(),
-            max_clock_drift,
-            max_block_lag,
-        )
-        .await;
-
-        let evidence = match divergence {
-            Ok(Some(divergence)) => divergence.evidence,
-            Ok(None) => {
-                info!(
-                    "no divergence found between primary and witness {}",
-                    witness.peer_id()
-                );
-
-                continue;
-            },
-            Err(e) => {
-                error!(
-                    "failed to run attack detector against witness {}: {e}",
-                    witness.peer_id()
-                );
-
-                continue;
-            },
-        };
-
-        // Report the evidence to the witness
-        witness
-            .report_evidence(Evidence::from(evidence.against_primary))
-            .await
-            .map_err(|e| eyre!("failed to report evidence to witness: {}", e))?;
-
-        if let Some(against_witness) = evidence.against_witness {
-            // Report the evidence to the primary
-            primary
-                .report_evidence(Evidence::from(against_witness))
-                .await
-                .map_err(|e| eyre!("failed to report evidence to primary: {}", e))?;
-        }
-    }
+    // let mut witnesses = witnesses.into_iter().collect::<Result<Vec<_>>>()?;
+    //
+    // let max_clock_drift = Duration::from_secs(args.max_clock_drift);
+    // let max_block_lag = Duration::from_secs(args.max_block_lag);
+    // let now = Time::now();
+    //
+    // run_detector(
+    //     &mut primary,
+    //     witnesses.as_mut_slice(),
+    //     primary_trace,
+    //     max_clock_drift,
+    //     max_block_lag,
+    //     now,
+    // )
+    // .await?;
 
     Ok(())
 }
+
+// async fn run_detector(
+//     primary: &mut Provider,
+//     witnesses: &mut [Provider],
+//     primary_trace: Vec<LightBlock>,
+//     max_clock_drift: Duration,
+//     max_block_lag: Duration,
+//     now: Time,
+// ) -> Result<(), Report> {
+//     if witnesses.is_empty() {
+//         return Err(Error::no_witnesses().into());
+//     }
+//
+//     info!(
+//         "Running misbehavior detection against {} witnesses...",
+//         witnesses.len()
+//     );
+//
+//     let primary_trace = Trace::new(primary_trace)?;
+//
+//     let last_verified_block = primary_trace.last();
+//     let last_verified_header = &last_verified_block.signed_header;
+//
+//     for witness in witnesses {
+//         let divergence = detect_divergence::<Sha256>(
+//             Some(primary),
+//             witness,
+//             primary_trace.clone().into_vec(),
+//             max_clock_drift,
+//             max_block_lag,
+//         )
+//         .await;
+//
+//         let evidence = match divergence {
+//             Ok(Some(divergence)) => divergence.evidence,
+//             Ok(None) => {
+//                 info!(
+//                     "no divergence found between primary and witness {}",
+//                     witness.peer_id()
+//                 );
+//
+//                 continue;
+//             },
+//             Err(e) => {
+//                 error!(
+//                     "failed to run attack detector against witness {}: {e}",
+//                     witness.peer_id()
+//                 );
+//
+//                 continue;
+//             },
+//         };
+//
+//         // Report the evidence to the witness
+//         witness
+//             .report_evidence(Evidence::from(evidence.against_primary))
+//             .await
+//             .map_err(|e| eyre!("failed to report evidence to witness: {}", e))?;
+//
+//         if let Some(against_witness) = evidence.against_witness {
+//             // Report the evidence to the primary
+//             primary
+//                 .report_evidence(Evidence::from(against_witness))
+//                 .await
+//                 .map_err(|e| eyre!("failed to report evidence to primary: {}", e))?;
+//         }
+//     }
+//
+//     Ok(())
+// }
 
 async fn make_provider(
     chain_id: &str,
